@@ -2,184 +2,144 @@ import java.util.ArrayList;
 
 public class SyntaxAnalyzer {
 
-    private ArrayList<ArrayList<Token>> tokenLines;  
-    private int tokenIndex = 0;
-    private int lineNumber = 1;
+    private final ArrayList<ArrayList<Token>> lines;
 
     public SyntaxAnalyzer(ArrayList<ArrayList<Token>> tokenLines) {
-        this.tokenLines = tokenLines;
-        while (lineNumber - 1 < tokenLines.size()) {
-            stmts();
-            nextLine();
+        this.lines = tokenLines;
+        analyze();
+    }
+
+    private void analyze() {
+        for (int i = 0; i < lines.size(); i++) {
+            ArrayList<Token> tokens = lines.get(i);
+            String verdict = classify(tokens);
+            System.out.println("Line " + (i + 1) + ": " + verdict);
         }
     }
 
-    private Token getTokenType() {
-        if (lineNumber - 1 < tokenLines.size() &&
-            tokenIndex < tokenLines.get(lineNumber - 1).size()) {
-            return tokenLines.get(lineNumber - 1).get(tokenIndex);
+    private String classify(ArrayList<Token> t) {
+        if (t.isEmpty()) {
+            return "IGNORED";
         }
-        return null;
-    }
-
-    private void nextToken() {
-        tokenIndex++;
-        if (lineNumber - 1 < tokenLines.size() &&
-            tokenIndex >= tokenLines.get(lineNumber - 1).size()) {
-            nextLine();
+        if (isCommentOnly(t)) {
+            return "IGNORED";
         }
-    }
-
-    private void nextLine() {
-        tokenIndex = 0;
-        lineNumber++;
-    }
-
-    private boolean expect(String expectedType) {
-        Token t = getTokenType();
-        if (t != null && t.getToken().equals(expectedType)) {
-            nextToken();
-            return true;
-        } else {
-            errorMessage();
-            return false;
+        if (isProgramHeader(t)) {
+            return "ACCEPT";
         }
-    }
-
-    private void errorMessage() {
-        System.out.println("Line " + lineNumber + ": Error");
-    }
-
-    private void stmts() {
-        Token t = getTokenType();
-        if (t == null) return;
-
-        switch (t.getToken()) {
-            case "IF_STMT":
-                if_stmt();
-                break;
-            case "ELSE_STMT":
-                else_stmt();
-                break;
-            case "DIV_OP":
-                comment_stmt();
-                break;
-            case "INT_IDENT":
-            case "DOUBLE_IDENT":
-                declare_stmt();
-                break;
-            case "IDENT":
-                nextToken();
-                assign_stmt();
-                break;
-            default:
-
-                break;
+        if (isConstDecl(t)) {
+            return "ACCEPT";
         }
-    }
-
-    private void if_stmt() {
-        nextToken();                 
-        if (!expect("LEFT_PAREN")) return;
-        if (!bool()) return;
-        if (!expect("RIGHT_PAREN")) return;
-    }
-
-    private void else_stmt() {
-        nextToken();                
-        stmts();                     
-    }
-
-    private void comment_stmt() {
-        nextToken();                 
-        Token t = getTokenType();
-        if (t != null && t.getToken().equals("DIV_OP")) {
-        } else {
-            errorMessage();
+        if (isVarSection(t)) {
+            return "ACCEPT";
         }
-    }
-
-    private void declare_stmt() {
-        nextToken();                 
-        if (!expect("IDENT")) return;
-        Token t = getTokenType();
-        if (t != null && t.getToken().equals("ASSIGN_OP")) {
-            assign_stmt();
-        } else if (t != null && t.getToken().equals("COMMA")) {
-            nextToken();
-            if (!expect("IDENT")) return;
+        if (isVarDecl(t)) {
+            return "ACCEPT";
         }
-        expect("SEMI_COLON");
-    }
-
-    private void assign_stmt() {
-        if (!expect("ASSIGN_OP")) return;
-        Token t = getTokenType();
-        if (t != null && t.getToken().equals("ASSIGN_OP")) {
-            errorMessage();
-            return;
+        if (isBegin(t)) {
+            return "ACCEPT";
         }
-        expr();
+        if (isEnd(t)) {
+            return "ACCEPT";
+        }
+        if (isAssignment(t)) {
+            return "ACCEPT";
+        }
+        if (isIfStatement(t)) {
+            return "ACCEPT";
+        }
+        if (isWriteOrRead(t)) {
+            return "ACCEPT";
+        }
+        return "REJECT";
     }
 
-    private void expr() {
-        Token t = getTokenType();
-        if (t == null) return;
+    private boolean isCommentOnly(ArrayList<Token> t) {
+        // Pascal comment: (* ... *)
+        return t.size() >= 4
+            && t.get(0).getToken().equals("LEFT_PAREN")
+            && t.get(1).getToken().equals("MULT_OP")
+            && t.get(t.size() - 2).getToken().equals("MULT_OP")
+            && t.get(t.size() - 1).getToken().equals("RIGHT_PAREN");
+    }
 
-        if (t.getToken().equals("LEFT_PAREN")) {
-            expect("LEFT_PAREN");
-            expr();
-            expect("RIGHT_PAREN");
-        } else if (t.getToken().equals("INT_LIT") ||
-                   t.getToken().equals("DOUBLE_LIT") ||
-                   t.getToken().equals("IDENT")) {
-            nextToken();
-            t = getTokenType();
-            if (t != null && (t.getToken().equals("ADD_OP") ||
-                              t.getToken().equals("SUB_OP") ||
-                              t.getToken().equals("DIV_OP") ||
-                              t.getToken().equals("MULT_OP"))) {
-                nextToken();
-                expr();
+    private boolean isProgramHeader(ArrayList<Token> t) {
+        // PROGRAM <ident> ;
+        return t.size() == 3
+            && isIdentLexeme(t.get(0), "PROGRAM")
+            && t.get(1).getToken().equals("IDENT")
+            && t.get(2).getToken().equals("SEMI_COLON");
+    }
+
+    private boolean isConstDecl(ArrayList<Token> t) {
+        // CONST <ident> := <expr> ;
+        if (t.size() < 5) return false;
+        if (!isIdentLexeme(t.get(0), "CONST"))        return false;
+        if (!t.get(1).getToken().equals("IDENT"))     return false;
+        if (!t.get(2).getToken().equals("ASSIGN_OP")) return false;
+        if (!t.get(t.size() - 1).getToken().equals("SEMI_COLON")) return false;
+        return true;
+    }
+
+    private boolean isVarSection(ArrayList<Token> t) {
+        // VAR
+        return t.size() == 1
+            && isIdentLexeme(t.get(0), "VAR");
+    }
+
+    private boolean isVarDecl(ArrayList<Token> t) {
+        // <ident> : <type> ;
+        if (t.size() != 3) return false;
+        return t.get(0).getToken().equals("IDENT")
+            && t.get(1).getLexeme().equals(":")
+            && t.get(2).getToken().equals("IDENT");
+    }
+
+    private boolean isBegin(ArrayList<Token> t) {
+        // BEGIN
+        return t.size() == 1
+            && isIdentLexeme(t.get(0), "BEGIN");
+    }
+
+    private boolean isEnd(ArrayList<Token> t) {
+        // END.
+        return t.size() >= 2
+            && isIdentLexeme(t.get(0), "END")
+            && t.get(1).getToken().equals("PERIOD");
+    }
+
+    private boolean isAssignment(ArrayList<Token> t) {
+        // <ident> := ... ;
+        if (t.size() < 4) return false;
+        if (!t.get(0).getToken().equals("IDENT"))   return false;
+        if (!t.get(1).getToken().equals("ASSIGN_OP")) return false;
+        if (!t.get(t.size() - 1).getToken().equals("SEMI_COLON")) return false;
+        return true;
+    }
+
+    private boolean isIfStatement(ArrayList<Token> t) {
+        // IF_STMT ( ... ) THEN ...
+        if (t.isEmpty() || !t.get(0).getToken().equals("IF_STMT")) return false;
+        // look for RIGHT_PAREN then THEN
+        for (int i = 1; i < t.size() - 1; i++) {
+            if (t.get(i).getToken().equals("RIGHT_PAREN")
+                && isIdentLexeme(t.get(i + 1), "THEN")) {
+                return true;
             }
         }
+        return false;
     }
 
-    private boolean bool() {
-        Token t = getTokenType();
-        if (t == null) return false;
-
-        if (t.getToken().equals("TRUE") || t.getToken().equals("FALSE")) {
-            nextToken();
-            return true;
-        } else if (arithmitic_value()) {
-            if (!check_op()) return false;
-            if (arithmitic_value()) return true;
+    private boolean isWriteOrRead(ArrayList<Token> t) {
+        // Write('...'); or Read(id);
+        if (isIdentLexeme(t.get(0), "WRITE") || isIdentLexeme(t.get(0), "READ")) {
+            return t.get(t.size() - 1).getToken().equals("SEMI_COLON");
         }
         return false;
     }
 
-    private boolean arithmitic_value() {
-        Token t = getTokenType();
-        if (t != null && (t.getToken().equals("IDENT") ||
-                          t.getToken().equals("INT_LIT") ||
-                          t.getToken().equals("DOUBLE_LIT"))) {
-            nextToken();
-            return true;
-        }
-        return false;
-    }
-
-    private boolean check_op() {
-        Token t = getTokenType();
-        if (t != null && (t.getToken().equals("EQUAL_OP") ||
-                          t.getToken().equals("GREATER_OP") ||
-                          t.getToken().equals("LESS_OP") ||
-                          t.getToken().equals("GEATER_EQ_OP") ||
-                          t.getToken().equals("LESS_EQ_OP"))) {
-            nextToken();
-            return true;
-        }
-        return false;
+    private boolean isIdentLexeme(Token tk, String lit) {
+        return tk.getToken().equals("IDENT")
+            && tk.getLexeme().equalsIgnoreCase(lit);
     }
 }
